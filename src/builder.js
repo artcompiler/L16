@@ -79,9 +79,12 @@ var Builder = (function () {
 
     var trace = imports.trace;
 
-    var $_ = 95;   // place holder
+    // Markers for UBJSON types
+    var $_ = 95;   // place holder byte
     var $o = 111;
     var $O = 79;
+    var $a = 97;
+    var $A = 65;
     var $B = 66;
     var $i = 105;
     var $I = 73;
@@ -115,10 +118,43 @@ var Builder = (function () {
       if ((isBig | 0) == 0) {
         bytes[offset + 1 | 0] = count;
       } else {
-        bytes[(offset + 1) | 0] = count >> 24 & 0xFF;
-        bytes[(offset + 2) | 0] = count >> 16 & 0xFF;
-        bytes[(offset + 3) | 0] = count >> 8 & 0xFF;
-        bytes[(offset + 4) | 0] = count & 0xFF;
+        bytes[offset + 1 | 0] = count >> 24 & 0xFF;
+        bytes[offset + 2 | 0] = count >> 16 & 0xFF;
+        bytes[offset + 3 | 0] = count >> 8 & 0xFF;
+        bytes[offset + 4 | 0] = count & 0xFF;
+      }
+    }
+
+    // Start an array. Allocate space for a new array. 'isBig' means larger
+    // than 255 properties.
+    function startArray(isBig) {
+      isBig = isBig | 0;
+      if ((isBig | 0) == 0) {
+        bytes[pos] = $a;
+        bytes[pos + 1 | 0] = $_;
+        pos = pos + 2 | 0;
+      } else {
+        bytes[pos] = $A;
+        bytes[pos + 1 | 0] = $_;
+        bytes[pos + 2 | 0] = $_;
+        bytes[pos + 3 | 0] = $_;
+        bytes[pos + 4 | 0] = $_;
+        pos = pos + 5 | 0;
+      }
+    }
+
+    // Finish an array. Offset is position before calling startArray().
+    function finishArray(offset, count, isBig) {
+      offset = offset | 0;
+      count = count | 0;
+      isBig = isBig | 0;
+      if ((isBig | 0) == 0) {
+        bytes[offset + 1 | 0] = count;
+      } else {
+        bytes[offset + 1 | 0] = count >> 24 & 0xFF;
+        bytes[offset + 2 | 0] = count >> 16 & 0xFF;
+        bytes[offset + 3 | 0] = count >> 8 & 0xFF;
+        bytes[offset + 4 | 0] = count & 0xFF;
       }
     }
 
@@ -157,10 +193,10 @@ var Builder = (function () {
       if ((isBig | 0) == 0) {
         bytes[offset + 1 | 0] = count;
       } else {
-        bytes[(offset + 1) | 0] = count >> 24 & 0xFF;
-        bytes[(offset + 2) | 0] = count >> 16 & 0xFF;
-        bytes[(offset + 3) | 0] = count >> 8 & 0xFF;
-        bytes[(offset + 4) | 0] = count & 0xFF;
+        bytes[offset + 1 | 0] = count >> 24 & 0xFF;
+        bytes[offset + 2 | 0] = count >> 16 & 0xFF;
+        bytes[offset + 3 | 0] = count >> 8 & 0xFF;
+        bytes[offset + 4 | 0] = count & 0xFF;
       }
     }
 
@@ -204,6 +240,8 @@ var Builder = (function () {
       writeI32: writeI32,
       startObject: startObject,
       finishObject: finishObject,
+      startArray: startArray,
+      finishArray: finishArray,
       startString: startString,
       finishString: finishString,
       writeStringChar: writeStringChar,
@@ -233,16 +271,25 @@ var Builder = (function () {
     builder.writeStringChar("o".charCodeAt(0));
     builder.finishString(pos.pop(), 5);
     builder.finishObject(pos.pop(), 1);
+    pos.push(builder.position());
+    builder.startArray(false);
+    builder.writeI32(0xFFFF);
+    builder.writeByte(1);
+    builder.finishArray(pos.pop(), 2, false);
+    
     dumpView();
 
     function dumpView() {
       var i = 0;
-      for (; i < 20; i = i + 1) {
+      for (; i < 25; i = i + 1) {
         trace(view[i]);
       }
     }
   }
-  test();
+
+  if (DEBUG) {
+    test();
+  }
 
   return Builder;
 
