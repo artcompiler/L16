@@ -2,6 +2,7 @@
 /* vim: set shiftwidth=2 tabstop=2 autoindent cindent expandtab: */
 /*
  * Copyright 2013 Art Compiler LLC
+ * Copyright 2013 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -88,6 +89,8 @@ var Builder = (function () {
     var $s = 115;
     var $S = 83;
 
+    // Start an object. Allocate space for a new object. 'isBig' means larger
+    // than 255 properties.
     function startObject(isBig) {
       isBig = isBig | 0;
       if ((isBig | 0) == 0) {
@@ -104,6 +107,7 @@ var Builder = (function () {
       }
     }
 
+    // Finish an object. Offset is position before calling startObject().
     function finishObject(offset, count, isBig) {
       offset = offset | 0;
       count = count | 0;
@@ -118,6 +122,9 @@ var Builder = (function () {
       }
     }
 
+    // Start a String. Allocate space for a new string. 'isBig' more than 255
+    // character. Call writeStringChar() to add characters, and finishString()
+    // to patch the character count.
     function startString(isBig) {
       isBig = isBig | 0;
       if ((isBig | 0) == 0) {
@@ -134,6 +141,15 @@ var Builder = (function () {
       }
     }
 
+    // Write a UTF8 character into a string.
+    function writeStringChar(val) {
+      val = val | 0;
+      // FIXME decode multibyte characters.
+      bytes[pos] = val;
+      pos = pos + 1 | 0;
+    }
+
+    // Finish a UTF8 string. Patch its byte count.
     function finishString(offset, count, isBig) {
       offset = offset | 0;
       count = count | 0;
@@ -148,19 +164,15 @@ var Builder = (function () {
       }
     }
 
-    function writeChar(val) {
-      val = val | 0; 
-      bytes[pos] = val;
-      pos = pos + 1 | 0;
-    }
-
+    // Write a UBJSON byte (int8) value.
     function writeByte(val) {
-      val = val | 0; 
+      val = val | 0;
       bytes[pos] = $B;
       bytes[pos + 1 | 0] = val;
       pos = pos + 2 | 0;
     }
 
+    // Write a UBJSON int16 value.
     function writeI16(val) {
       val = val | 0;
       bytes[pos] = $i;
@@ -169,6 +181,7 @@ var Builder = (function () {
       pos = pos + 3 | 0;
     }
 
+    // Write a UBJSON int32 value.
     function writeI32(val) {
       val = val | 0;
       bytes[pos] = $I;
@@ -179,12 +192,13 @@ var Builder = (function () {
       pos = pos + 5 | 0;
     }
 
+    // Return the current position in the ArrayBuffer.
     function position() {
       return pos | 0;
     }
 
+    // Exports
     return {
-      writeChar: writeChar,
       writeByte: writeByte,
       writeI16: writeI16,
       writeI32: writeI32,
@@ -192,6 +206,7 @@ var Builder = (function () {
       finishObject: finishObject,
       startString: startString,
       finishString: finishString,
+      writeStringChar: writeStringChar,
       position: position,
     };
   }
@@ -211,11 +226,11 @@ var Builder = (function () {
     builder.writeByte(10);
     pos.push(builder.position());
     builder.startString();
-    builder.writeChar("h".charCodeAt(0));
-    builder.writeChar("e".charCodeAt(0));
-    builder.writeChar("l".charCodeAt(0));
-    builder.writeChar("l".charCodeAt(0));
-    builder.writeChar("o".charCodeAt(0));
+    builder.writeStringChar("h".charCodeAt(0));
+    builder.writeStringChar("e".charCodeAt(0));
+    builder.writeStringChar("l".charCodeAt(0));
+    builder.writeStringChar("l".charCodeAt(0));
+    builder.writeStringChar("o".charCodeAt(0));
     builder.finishString(pos.pop(), 5);
     builder.finishObject(pos.pop(), 1);
     dumpView();
@@ -232,4 +247,3 @@ var Builder = (function () {
   return Builder;
 
 })();
-
