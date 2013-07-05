@@ -83,7 +83,6 @@ var Builder = (function () {
     var imul = stdlib.Math.imul;
 
     // Markers for UBJSON types
-    var $_ = 95;   // place holder byte
     var $o = 111;
     var $O = 79;
     var $a = 97;
@@ -96,9 +95,106 @@ var Builder = (function () {
     var $D = 68;
     var $s = 115;
     var $S = 83;
+    var $Z = 90;
+    var $T = 84;
+    var $F = 70;
+
+    var $_ = 95;   // place holder byte
 
     // Flag bits
     var BIG = 0x00000001;
+
+    // Write a null value.
+    function writeNull() {
+      bytesU8[pos] = $Z;
+      pos = pos + 1 | 0;
+    }
+
+    // Write a true value.
+    function writeTrue() {
+      bytesU8[pos] = $T;
+      pos = pos + 1 | 0;
+    }
+
+    // Write a false value.
+    function writeFalse() {
+      bytesU8[pos] = $F;
+      pos = pos + 1 | 0;
+    }
+
+    // Write a byte (int8) value.
+    function writeByte(val) {
+      val = val | 0;
+      bytesU8[pos] = $B;
+      bytesU8[pos + 1 | 0] = val;
+      pos = pos + 2 | 0;
+    }
+
+    // Write an int16 value.
+    function writeI16(val) {
+      val = val | 0;
+      bytesU8[pos] = $i;
+      bytesU8[pos + 1 | 0] = val >> 8 & 0xFF;
+      bytesU8[pos + 2 | 0] = val & 0xFF;
+      pos = pos + 3 | 0;
+    }
+
+    // Write an int32 value.
+    function writeI32(val) {
+      val = val | 0;
+      bytesU8[pos] = $I;
+      bytesU8[pos + 1 | 0] = val >> 24 & 0xFF;
+      bytesU8[pos + 2 | 0] = val >> 16 & 0xFF;
+      bytesU8[pos + 3 | 0] = val >> 8 & 0xFF;
+      bytesU8[pos + 4 | 0] = val & 0xFF;
+      pos = pos + 5 | 0;
+    }
+
+    // WARNING writeD32() and writeD64() write bytes out with the reverse
+    // endian-ness of the host computer. The order is reversed because UBJSON
+    // demands big endian-ness and most computers use litte endian as their
+    // native encoding. Either way the dependency of this implementation on the
+    // native endian-ness of the host computer creates an incompatibility with
+    // the UBJSON spec. This bug will only manifest itself when reading and
+    // writing UBJSON values from a computer or UBJSON implementation with a
+    // different endian-ness. However, these are not use cases that are in scope
+    // for the current implementation.
+
+    // Write an float32 value.
+    function writeD32(val) {
+      val = +val;
+      var scratchPos = 0;
+      scratchPos = imul(pos + 1, 4) | 0;
+      bytesD32[scratchPos >> 2] = val;  // Write out float32 to get bytes.
+      bytesU8[pos] = $d;
+      // Copy bytes in reverse order to produce big endian on Intel hardward.
+      bytesU8[pos + 1 | 0] = bytesU8[scratchPos + 3 | 0];
+      bytesU8[pos + 2 | 0] = bytesU8[scratchPos + 2 | 0];
+      bytesU8[pos + 3 | 0] = bytesU8[scratchPos + 1 | 0];
+      bytesU8[pos + 4 | 0] = bytesU8[scratchPos | 0];
+      pos = pos + 5 | 0;
+      //trace("pos="+pos);
+    }
+
+    // Write an float64 value.
+    function writeD64(val) {
+      val = +val;
+      var scratchPos = 0;
+      scratchPos = imul(pos + 1, 8) | 0;
+      bytesD64[scratchPos >> 3] = val;  // Write out float64 to get bytes.
+      bytesU8[pos] = $D;
+      // Copy bytes in reverse order to produce big endian on Intel hardward.
+      bytesU8[pos + 1 | 0] = bytesU8[scratchPos + 7 | 0];
+      bytesU8[pos + 2 | 0] = bytesU8[scratchPos + 6 | 0];
+      bytesU8[pos + 3 | 0] = bytesU8[scratchPos + 5 | 0];
+      bytesU8[pos + 4 | 0] = bytesU8[scratchPos + 4 | 0];
+      bytesU8[pos + 5 | 0] = bytesU8[scratchPos + 3 | 0];
+      bytesU8[pos + 6 | 0] = bytesU8[scratchPos + 2 | 0];
+      bytesU8[pos + 7 | 0] = bytesU8[scratchPos + 1 | 0];
+      bytesU8[pos + 8 | 0] = bytesU8[scratchPos | 0];
+      pos = pos + 9 | 0;
+      //trace("pos="+pos);
+    }
 
     // Start an object. Allocate space for a new object. (flags & BIG) means
     // more than 255 properties.
@@ -209,80 +305,6 @@ var Builder = (function () {
       pos = pos + 1 | 0;
     }
 
-    // Write a byte (int8) value.
-    function writeByte(val) {
-      val = val | 0;
-      bytesU8[pos] = $B;
-      bytesU8[pos + 1 | 0] = val;
-      pos = pos + 2 | 0;
-    }
-
-    // Write an int16 value.
-    function writeI16(val) {
-      val = val | 0;
-      bytesU8[pos] = $i;
-      bytesU8[pos + 1 | 0] = val >> 8 & 0xFF;
-      bytesU8[pos + 2 | 0] = val & 0xFF;
-      pos = pos + 3 | 0;
-    }
-
-    // Write an int32 value.
-    function writeI32(val) {
-      val = val | 0;
-      bytesU8[pos] = $I;
-      bytesU8[pos + 1 | 0] = val >> 24 & 0xFF;
-      bytesU8[pos + 2 | 0] = val >> 16 & 0xFF;
-      bytesU8[pos + 3 | 0] = val >> 8 & 0xFF;
-      bytesU8[pos + 4 | 0] = val & 0xFF;
-      pos = pos + 5 | 0;
-    }
-
-    // WARNING writeD32() and writeD64() write bytes out with the reverse
-    // endian-ness of the host computer. The order is reversed because UBJSON
-    // demands big endian-ness and most computers use litte endian as their
-    // native encoding. Either way the dependency of this implementation on the
-    // native endian-ness of the host computer creates an incompatibility with
-    // the UBJSON spec. This bug will only manifest itself when reading and
-    // writing UBJSON values from a computer or UBJSON implementation with a
-    // different endian-ness. However, these are not use cases that are in scope
-    // for the current implementation.
-
-    // Write an float32 value.
-    function writeD32(val) {
-      val = +val;
-      var scratchPos = 0;
-      scratchPos = imul(pos + 1, 4) | 0;
-      bytesD32[scratchPos >> 2] = val;  // Write out float32 to get bytes.
-      bytesU8[pos] = $d;
-      // Copy bytes in reverse order to produce big endian on Intel hardward.
-      bytesU8[pos + 1 | 0] = bytesU8[scratchPos + 3 | 0];
-      bytesU8[pos + 2 | 0] = bytesU8[scratchPos + 2 | 0];
-      bytesU8[pos + 3 | 0] = bytesU8[scratchPos + 1 | 0];
-      bytesU8[pos + 4 | 0] = bytesU8[scratchPos | 0];
-      pos = pos + 5 | 0;
-      //trace("pos="+pos);
-    }
-
-    // Write an float64 value.
-    function writeD64(val) {
-      val = +val;
-      var scratchPos = 0;
-      scratchPos = imul(pos + 1, 8) | 0;
-      bytesD64[scratchPos >> 3] = val;  // Write out float64 to get bytes.
-      bytesU8[pos] = $D;
-      // Copy bytes in reverse order to produce big endian on Intel hardward.
-      bytesU8[pos + 1 | 0] = bytesU8[scratchPos + 7 | 0];
-      bytesU8[pos + 2 | 0] = bytesU8[scratchPos + 6 | 0];
-      bytesU8[pos + 3 | 0] = bytesU8[scratchPos + 5 | 0];
-      bytesU8[pos + 4 | 0] = bytesU8[scratchPos + 4 | 0];
-      bytesU8[pos + 5 | 0] = bytesU8[scratchPos + 3 | 0];
-      bytesU8[pos + 6 | 0] = bytesU8[scratchPos + 2 | 0];
-      bytesU8[pos + 7 | 0] = bytesU8[scratchPos + 1 | 0];
-      bytesU8[pos + 8 | 0] = bytesU8[scratchPos | 0];
-      pos = pos + 9 | 0;
-      //trace("pos="+pos);
-    }
-
     // Return the current position in the ArrayBuffer.
     function position() {
       return pos | 0;
@@ -290,6 +312,9 @@ var Builder = (function () {
 
     // Exports
     return {
+      writeNull: writeNull,
+      writeTrue: writeTrue,
+      writeFalse: writeFalse,
       writeByte: writeByte,
       writeI16: writeI16,
       writeI32: writeI32,
