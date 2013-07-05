@@ -75,9 +75,12 @@ var Builder = (function () {
     "use asm";
 
     var pos = 0;
-    var bytes = new stdlib.Uint8Array(heap);
+    var bytesU8 = new stdlib.Uint8Array(heap);
+    var bytesD32 = new stdlib.Float32Array(heap);
+    var bytesD64 = new stdlib.Float64Array(heap);
 
     var trace = imports.trace;
+    var imul = stdlib.Math.imul;
 
     // Markers for UBJSON types
     var $_ = 95;   // place holder byte
@@ -89,143 +92,195 @@ var Builder = (function () {
     var $i = 105;
     var $I = 73;
     var $L = 76;
+    var $d = 100;
+    var $D = 68;
     var $s = 115;
     var $S = 83;
 
-    // Start an object. Allocate space for a new object. 'isBig' means larger
-    // than 255 properties.
-    function startObject(isBig) {
-      isBig = isBig | 0;
-      if ((isBig | 0) == 0) {
-        bytes[pos] = $o;
-        bytes[pos + 1 | 0] = $_;
+    // Flag bits
+    var BIG = 0x00000001;
+
+    // Start an object. Allocate space for a new object. (flags & BIG) means
+    // more than 255 properties.
+    function startObject(flags) {
+      flags = flags | 0;
+      if ((flags & BIG | 0) == 0) {
+        bytesU8[pos] = $o;
+        bytesU8[pos + 1 | 0] = $_;
         pos = pos + 2 | 0;
       } else {
-        bytes[pos] = $O;
-        bytes[pos + 1 | 0] = $_;
-        bytes[pos + 2 | 0] = $_;
-        bytes[pos + 3 | 0] = $_;
-        bytes[pos + 4 | 0] = $_;
+        bytesU8[pos] = $O;
+        bytesU8[pos + 1 | 0] = $_;
+        bytesU8[pos + 2 | 0] = $_;
+        bytesU8[pos + 3 | 0] = $_;
+        bytesU8[pos + 4 | 0] = $_;
         pos = pos + 5 | 0;
       }
     }
 
     // Finish an object. Offset is position before calling startObject().
-    function finishObject(offset, count, isBig) {
+    function finishObject(offset, count, flags) {
       offset = offset | 0;
       count = count | 0;
-      isBig = isBig | 0;
-      if ((isBig | 0) == 0) {
-        bytes[offset + 1 | 0] = count;
+      flags = flags | 0;
+      if ((flags & BIG | 0) == 0) {
+        bytesU8[offset + 1 | 0] = count;
       } else {
-        bytes[offset + 1 | 0] = count >> 24 & 0xFF;
-        bytes[offset + 2 | 0] = count >> 16 & 0xFF;
-        bytes[offset + 3 | 0] = count >> 8 & 0xFF;
-        bytes[offset + 4 | 0] = count & 0xFF;
+        bytesU8[offset + 1 | 0] = count >> 24 & 0xFF;
+        bytesU8[offset + 2 | 0] = count >> 16 & 0xFF;
+        bytesU8[offset + 3 | 0] = count >> 8 & 0xFF;
+        bytesU8[offset + 4 | 0] = count & 0xFF;
       }
     }
 
-    // Start an array. Allocate space for a new array. 'isBig' means larger
-    // than 255 properties.
-    function startArray(isBig) {
-      isBig = isBig | 0;
-      if ((isBig | 0) == 0) {
-        bytes[pos] = $a;
-        bytes[pos + 1 | 0] = $_;
+    // Start an array. Allocate space for a new array. (flags & BIG) means
+    // more than 255 elements.
+    function startArray(flags) {
+      flags = flags | 0;
+      if ((flags & BIG | 0) == 0) {
+        bytesU8[pos] = $a;
+        bytesU8[pos + 1 | 0] = $_;
         pos = pos + 2 | 0;
       } else {
-        bytes[pos] = $A;
-        bytes[pos + 1 | 0] = $_;
-        bytes[pos + 2 | 0] = $_;
-        bytes[pos + 3 | 0] = $_;
-        bytes[pos + 4 | 0] = $_;
+        bytesU8[pos] = $A;
+        bytesU8[pos + 1 | 0] = $_;
+        bytesU8[pos + 2 | 0] = $_;
+        bytesU8[pos + 3 | 0] = $_;
+        bytesU8[pos + 4 | 0] = $_;
         pos = pos + 5 | 0;
       }
     }
 
     // Finish an array. Offset is position before calling startArray().
-    function finishArray(offset, count, isBig) {
+    function finishArray(offset, count, flags) {
       offset = offset | 0;
       count = count | 0;
-      isBig = isBig | 0;
-      if ((isBig | 0) == 0) {
-        bytes[offset + 1 | 0] = count;
+      flags = flags | 0;
+      if ((flags & BIG | 0) == 0) {
+        bytesU8[offset + 1 | 0] = count;
       } else {
-        bytes[offset + 1 | 0] = count >> 24 & 0xFF;
-        bytes[offset + 2 | 0] = count >> 16 & 0xFF;
-        bytes[offset + 3 | 0] = count >> 8 & 0xFF;
-        bytes[offset + 4 | 0] = count & 0xFF;
+        bytesU8[offset + 1 | 0] = count >> 24 & 0xFF;
+        bytesU8[offset + 2 | 0] = count >> 16 & 0xFF;
+        bytesU8[offset + 3 | 0] = count >> 8 & 0xFF;
+        bytesU8[offset + 4 | 0] = count & 0xFF;
       }
     }
 
-    // Start a String. Allocate space for a new string. 'isBig' more than 255
-    // character. Call writeStringChar() to add characters, and finishString()
-    // to patch the character count.
-    function startString(isBig) {
-      isBig = isBig | 0;
-      if ((isBig | 0) == 0) {
-        bytes[pos] = $s;
-        bytes[pos + 1 | 0] = $_;
+    // Start a string value. Allocate space for a new string. (flags & BIG)
+    // means contains more 255 bytes. Call writeStringChar() to add characters,
+    // and finishString() to patch the byte count. Notice that characters are
+    // encoded as UTF8 so they may consist of more than one byte.
+    function startString(flags) {
+      flags = flags | 0;
+      if ((flags & BIG | 0) == 0) {
+        bytesU8[pos] = $s;
+        bytesU8[pos + 1 | 0] = $_;
         pos = pos + 2 | 0;
       } else {
-        bytes[pos] = $S;
-        bytes[pos + 1 | 0] = $_;
-        bytes[pos + 2 | 0] = $_;
-        bytes[pos + 3 | 0] = $_;
-        bytes[pos + 4 | 0] = $_;
+        bytesU8[pos] = $S;
+        bytesU8[pos + 1 | 0] = $_;
+        bytesU8[pos + 2 | 0] = $_;
+        bytesU8[pos + 3 | 0] = $_;
+        bytesU8[pos + 4 | 0] = $_;
         pos = pos + 5 | 0;
       }
     }
 
-    // Write a UTF8 character into a string.
-    function writeStringChar(val) {
-      val = val | 0;
-      // FIXME decode multibyte characters.
-      bytes[pos] = val;
-      pos = pos + 1 | 0;
-    }
-
-    // Finish a UTF8 string. Patch its byte count.
-    function finishString(offset, count, isBig) {
+    // Finish a string value. Patch its byte count.
+    function finishString(offset, count, flags) {
       offset = offset | 0;
       count = count | 0;
-      isBig = isBig | 0;
-      if ((isBig | 0) == 0) {
-        bytes[offset + 1 | 0] = count;
+      flags = flags | 0;
+      if ((flags & BIG | 0) == 0) {
+        bytesU8[offset + 1 | 0] = count;
       } else {
-        bytes[offset + 1 | 0] = count >> 24 & 0xFF;
-        bytes[offset + 2 | 0] = count >> 16 & 0xFF;
-        bytes[offset + 3 | 0] = count >> 8 & 0xFF;
-        bytes[offset + 4 | 0] = count & 0xFF;
+        bytesU8[offset + 1 | 0] = count >> 24 & 0xFF;
+        bytesU8[offset + 2 | 0] = count >> 16 & 0xFF;
+        bytesU8[offset + 3 | 0] = count >> 8 & 0xFF;
+        bytesU8[offset + 4 | 0] = count & 0xFF;
       }
     }
 
-    // Write a UBJSON byte (int8) value.
+    // Write a UTF8 character into a string value.
+    function writeStringChar(val) {
+      val = val | 0;
+      // FIXME decode multibyte characters.
+      bytesU8[pos] = val;
+      pos = pos + 1 | 0;
+    }
+
+    // Write a byte (int8) value.
     function writeByte(val) {
       val = val | 0;
-      bytes[pos] = $B;
-      bytes[pos + 1 | 0] = val;
+      bytesU8[pos] = $B;
+      bytesU8[pos + 1 | 0] = val;
       pos = pos + 2 | 0;
     }
 
-    // Write a UBJSON int16 value.
+    // Write an int16 value.
     function writeI16(val) {
       val = val | 0;
-      bytes[pos] = $i;
-      bytes[pos + 1 | 0] = val >> 8 & 0xFF;
-      bytes[pos + 2 | 0] = val & 0xFF;
+      bytesU8[pos] = $i;
+      bytesU8[pos + 1 | 0] = val >> 8 & 0xFF;
+      bytesU8[pos + 2 | 0] = val & 0xFF;
       pos = pos + 3 | 0;
     }
 
-    // Write a UBJSON int32 value.
+    // Write an int32 value.
     function writeI32(val) {
       val = val | 0;
-      bytes[pos] = $I;
-      bytes[pos + 1 | 0] = val >> 24 & 0xFF;
-      bytes[pos + 2 | 0] = val >> 16 & 0xFF;
-      bytes[pos + 3 | 0] = val >> 8 & 0xFF;
-      bytes[pos + 4 | 0] = val & 0xFF;
+      bytesU8[pos] = $I;
+      bytesU8[pos + 1 | 0] = val >> 24 & 0xFF;
+      bytesU8[pos + 2 | 0] = val >> 16 & 0xFF;
+      bytesU8[pos + 3 | 0] = val >> 8 & 0xFF;
+      bytesU8[pos + 4 | 0] = val & 0xFF;
       pos = pos + 5 | 0;
+    }
+
+    // WARNING writeD32() and writeD64() write bytes out with the reverse
+    // endian-ness of the host computer. The order is reversed because UBJSON
+    // demands big endian-ness and most computers use litte endian as their
+    // native encoding. Either way the dependency of this implementation on the
+    // native endian-ness of the host computer creates an incompatibility with
+    // the UBJSON spec. This bug will only manifest itself when reading and
+    // writing UBJSON values from a computer or UBJSON implementation with a
+    // different endian-ness. However, these are not use cases that are in scope
+    // for the current implementation.
+
+    // Write an float32 value.
+    function writeD32(val) {
+      val = +val;
+      var scratchPos = 0;
+      scratchPos = imul(pos + 1, 4) | 0;
+      bytesD32[scratchPos >> 2] = val;  // Write out float32 to get bytes.
+      bytesU8[pos] = $d;
+      // Copy bytes in reverse order to produce big endian on Intel hardward.
+      bytesU8[pos + 1 | 0] = bytesU8[scratchPos + 3 | 0];
+      bytesU8[pos + 2 | 0] = bytesU8[scratchPos + 2 | 0];
+      bytesU8[pos + 3 | 0] = bytesU8[scratchPos + 1 | 0];
+      bytesU8[pos + 4 | 0] = bytesU8[scratchPos | 0];
+      pos = pos + 5 | 0;
+      //trace("pos="+pos);
+    }
+
+    // Write an float64 value.
+    function writeD64(val) {
+      val = +val;
+      var scratchPos = 0;
+      scratchPos = imul(pos + 1, 8) | 0;
+      bytesD64[scratchPos >> 3] = val;  // Write out float64 to get bytes.
+      bytesU8[pos] = $D;
+      // Copy bytes in reverse order to produce big endian on Intel hardward.
+      bytesU8[pos + 1 | 0] = bytesU8[scratchPos + 7 | 0];
+      bytesU8[pos + 2 | 0] = bytesU8[scratchPos + 6 | 0];
+      bytesU8[pos + 3 | 0] = bytesU8[scratchPos + 5 | 0];
+      bytesU8[pos + 4 | 0] = bytesU8[scratchPos + 4 | 0];
+      bytesU8[pos + 5 | 0] = bytesU8[scratchPos + 3 | 0];
+      bytesU8[pos + 6 | 0] = bytesU8[scratchPos + 2 | 0];
+      bytesU8[pos + 7 | 0] = bytesU8[scratchPos + 1 | 0];
+      bytesU8[pos + 8 | 0] = bytesU8[scratchPos | 0];
+      pos = pos + 9 | 0;
+      //trace("pos="+pos);
     }
 
     // Return the current position in the ArrayBuffer.
@@ -238,6 +293,8 @@ var Builder = (function () {
       writeByte: writeByte,
       writeI16: writeI16,
       writeI32: writeI32,
+      writeD32: writeD32,
+      writeD64: writeD64,
       startObject: startObject,
       finishObject: finishObject,
       startArray: startArray,
@@ -259,6 +316,7 @@ var Builder = (function () {
     var builder = Builder(global, imports, buffer);
     var view = new Uint8Array(buffer);
     var pos = [];
+    var BIG = 0x01;
     pos.push(builder.position());
     builder.startObject();
     builder.writeByte(10);
@@ -272,17 +330,23 @@ var Builder = (function () {
     builder.finishString(pos.pop(), 5);
     builder.finishObject(pos.pop(), 1);
     pos.push(builder.position());
-    builder.startArray(false);
+    builder.startArray(BIG);
     builder.writeI32(0xFFFF);
     builder.writeByte(1);
-    builder.finishArray(pos.pop(), 2, false);
-    
+    builder.finishArray(pos.pop(), 2, BIG);
+    builder.writeD32(1.23);
+    builder.writeD64(1.23);
+    builder.writeD32(1.23);
     dumpView();
 
     function dumpView() {
       var i = 0;
-      for (; i < 25; i = i + 1) {
-        trace(view[i]);
+      for ( ; i < 100 ; ) {
+        var s = "";
+        for (var j = 0; j < 10; i++, j++) {
+          s += view[i] + " ";
+        }
+        trace(s);
       }
     }
   }
