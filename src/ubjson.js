@@ -68,10 +68,9 @@ var trace = function trace(str) {
   }
 }
 
-
 var UBJSON = (function () {
 
-  var UBJSON = function UBJSON(stdlib, imports, heap) {
+  var Core = function Core(stdlib, imports, heap) {
 
     "use asm";
 
@@ -87,7 +86,9 @@ var UBJSON = (function () {
     var pushNull = imports.pushNull;
     var pushTrue = imports.pushTrue;
     var pushFalse = imports.pushFalse;
-    var pushNumber = imports.pushNumber;
+    var pushInt = imports.pushInt;
+    var pushFloat32 = imports.pushFloat32;
+    var pushFloat64 = imports.pushFloat64;
     var pushString = imports.pushString;
     var newObject = imports.newObject;
     var newArray = imports.newArray;
@@ -326,11 +327,10 @@ var UBJSON = (function () {
       bytesU8[pos] = val;
       pos = pos + 1 | 0;
     }
-
     // END Builder
 
-    // BEGIN Decoder
 
+    // BEGIN Decoder
     // Construct a UBJSON value from a sequence of bytes.
     function decode() {
       var marker = 0;
@@ -350,22 +350,19 @@ var UBJSON = (function () {
           pushFalse();
           return;
         case 66:  // $B
-          pushNumber(readI8() | 0);
+          pushInt(readI8() | 0);
           return;
         case 105: // $i
-          pushNumber(readI16() | 0);
+          pushInt(readI16() | 0);
           return;
         case 73:  // $I
-          pushNumber(readI32() | 0);
+          pushInt(readI32() | 0);
           return;
         case 100: // $d
-          // FIXME
-          pushNumber(+readI32());
+          pushFloat32();
           return;
         case 68:  // $D
-          // FIXME
-          pushNumber(+readI32());
-          pushNumber(+readI32());
+          pushFloat64();
           return;
         case 115: // $s
           pushString(readI8() | 0)
@@ -437,32 +434,12 @@ var UBJSON = (function () {
       pos = pos + 4 | 0;
       return val | 0;
     }
-
-    // WARNING writeD32() and writeD64() write bytes out with the reverse
-    // endian-ness of the host computer. The order is reversed because UBJSON
-    // demands big endian-ness and most computers use litte endian as their
-    // native encoding. Either way the dependency of this implementation on the
-    // native endian-ness of the host computer creates an incompatibility with
-    // the UBJSON spec. This bug will only manifest itself when reading and
-    // writing UBJSON values from a computer or UBJSON implementation with a
-    // different endian-ness. However, these are not use cases that are in scope
-    // for the current implementation.
-
-    // Read a float32 value.
-    function readD32() {
-      return +1.23;
-    }
-
-    // Read a float64 value.
-    function readD64() {
-      return +1.23;
-    }
-
     // END Decoder
     // END SNIP
 
     // Exports
     return {
+      // Builder functions
       writeNull: writeNull,
       writeTrue: writeTrue,
       writeFalse: writeFalse,
@@ -478,20 +455,19 @@ var UBJSON = (function () {
       startString: startString,
       finishString: finishString,
       writeStringChar: writeStringChar,
+      // Decode function
+      decode: decode,
+      // Utils
       getPos: getPos,
       setPos: setPos,
-      decode: decode,
     };
   }
 
-  // Self test
-
-  function test() {
-    var buffer = new ArrayBuffer(4096);
-    var view = new Uint8Array(buffer);
+  var UBJSON = function UBJSON(buffer) {
+    var view = new DataView(buffer);
     var values = [];
     var imports = {
-      trace: print,
+      trace: trace,
       pushNull: function () {
         print("pushNull()");
         values.push(null);
@@ -504,20 +480,34 @@ var UBJSON = (function () {
         print("pushFalse()");
         values.push(false);
       },
-      pushNumber: function (val) {
-        print("pushNumber() val=" + val);
+      pushInt: function (val) {
+        print("pushInt() val=" + val);
         values.push(val);
+      },
+      pushFloat32: function () {
+        var pos = core.getPos();
+        var val = view.getFloat32(pos);
+        print("pushFloat32() val=" + val);
+        values.push(val);
+        core.setPos(pos+4);
+      },
+      pushFloat64: function () {
+        var pos = core.getPos();
+        var val = view.getFloat64(pos);
+        print("pushFloat64() val=" + val);
+        values.push(val);
+        core.setPos(pos+8);
       },
       pushString: function (size) {
         print("pushString() size=" + size);
-        var start = ubjson.getPos();
+        var start = core.getPos();
         var stop = start + size;
         var val = "";
         for (var i = start; i < stop; i++) {
-          val += String.fromCharCode(view[i]);
+          val += String.fromCharCode(view.getInt8(i));
         }
         values.push(val);
-        ubjson.setPos(stop);
+        core.setPos(stop);
       },
       newObject: function (count) {
         print("newObject() count=" + count);
@@ -539,8 +529,21 @@ var UBJSON = (function () {
         values.push(val);
       },
     }
-    var ubjson = UBJSON(global, imports, buffer);
-    var view = new Uint8Array(buffer);
+    var core = Core(global, imports, buffer);
+    function decode() {
+      core.decode();
+      return values.pop();
+    }
+    var ubjson = Object.create(core);
+    ubjson.decode = decode;
+    return ubjson;
+  }
+
+  // Self test
+  function test() {
+    var buffer = new ArrayBuffer(4096);
+    var ubjson = UBJSON(buffer);
+    // TEST Builder functions
     var pos = [];
     var BIG = 0x01;
     pos.push(ubjson.getPos());
@@ -562,21 +565,21 @@ var UBJSON = (function () {
     ubjson.writeD32(1.23);
     ubjson.writeD64(1.23);
     ubjson.writeD32(1.23);
-    ubjson.finishArray(pos.pop(), 7, BIG);
-    dumpView();
-    ubjson.setPos(0);
-    ubjson.decode();
-    print(JSON.stringify(values.pop(), null, 2));
-    function dumpView() {
-      var i = 0;
-      for ( ; i < 100 ; ) {
+    ubjson.finishArray(pos.pop(), 6, BIG);
+    dumpView(new DataView(buffer));
+    function dumpView(view) {
+      for (var i = 0 ; i < 128 ; ) {
         var s = "";
-        for (var j = 0; j < 10; i++, j++) {
-          s += view[i] + " ";
+        for (var j = 0; j < 16; i++, j++) {
+          s += view.getUint8(i) + " ";
         }
         trace(s);
       }
     }
+    // Test Decode function
+    ubjson.setPos(5);
+    var value = ubjson.decode();
+    print(JSON.stringify(value, null, 2));
   }
 
   if (DEBUG) {
@@ -586,3 +589,5 @@ var UBJSON = (function () {
   return UBJSON;
 
 })();
+
+
