@@ -69,10 +69,13 @@ var trace = function trace(str) {
 }
 
 
-var Builder = (function () {
+var UBJSON = (function () {
 
-  var Builder = function Builder(stdlib, imports, heap) {
+  var UBJSON = function UBJSON(stdlib, imports, heap) {
+
     "use asm";
+
+    // BEGIN SNIP
 
     var pos = 0;
     var bytesU8 = new stdlib.Uint8Array(heap);
@@ -81,6 +84,13 @@ var Builder = (function () {
 
     var trace = imports.trace;
     var imul = stdlib.Math.imul;
+    var pushNull = imports.pushNull;
+    var pushTrue = imports.pushTrue;
+    var pushFalse = imports.pushFalse;
+    var pushNumber = imports.pushNumber;
+    var pushString = imports.pushString;
+    var newObject = imports.newObject;
+    var newArray = imports.newArray;
 
     // Markers for UBJSON types
     var $o = 111;
@@ -103,6 +113,18 @@ var Builder = (function () {
 
     // Flag bits
     var BIG = 0x00000001;
+
+    // Return the current position in the ArrayBuffer.
+    function getPos() {
+      return pos | 0;
+    }
+
+    function setPos(p) {
+      p = p | 0;
+      pos = p;
+    }
+
+    // BEGIN Builder
 
     // Write a null value.
     function writeNull() {
@@ -305,10 +327,139 @@ var Builder = (function () {
       pos = pos + 1 | 0;
     }
 
-    // Return the current position in the ArrayBuffer.
-    function position() {
-      return pos | 0;
+    // END Builder
+
+    // BEGIN Decoder
+
+    // Construct a UBJSON value from a sequence of bytes.
+    function decode() {
+      var marker = 0;
+      var count = 0;
+      var i = 0;
+      while (1) {
+        marker = readI8() | 0;
+        //trace("decode() marker=" + marker);
+        switch (marker | 0) {
+        case 90:  // $Z
+          pushNull();
+          return;
+        case 84:  // $T
+          pushTrue();
+          return;
+        case 70:  // $F
+          pushFalse();
+          return;
+        case 66:  // $B
+          pushNumber(readI8() | 0);
+          return;
+        case 105: // $i
+          pushNumber(readI16() | 0);
+          return;
+        case 73:  // $I
+          pushNumber(readI32() | 0);
+          return;
+        case 100: // $d
+          // FIXME
+          pushNumber(+readI32());
+          return;
+        case 68:  // $D
+          // FIXME
+          pushNumber(+readI32());
+          pushNumber(+readI32());
+          return;
+        case 115: // $s
+          pushString(readI8() | 0)
+          return;
+        case 83:  // $S
+          pushString(readI32() | 0)
+          return;
+        case 111: // $o
+          //trace("$o");
+          count = readI8() | 0;
+          for (i = 0; ~~i < ~~count; i = i + 1 | 0) {
+            decode();
+            decode();
+          }
+          newObject(count | 0);
+          return;
+        case 79:  // $O
+          count = readI32() | 0;
+          for (i = 0; ~~i < ~~count; i = i + 1 | 0) {
+            decode();
+            decode();
+          }
+          newObject(count | 0);
+          return;
+        case 97:  // $a
+          count = readI8() | 0;
+          for (i = 0; ~~i < ~~count; i = i + 1 | 0) {
+            decode();
+          }
+          newArray(count | 0);
+          return;
+        case 65:  // $A
+          count = readI32() | 0;
+          for (i = 0; ~~i < ~~count; i = i + 1 | 0) {
+            decode();
+          }
+          newArray(count | 0);
+          return;
+        default:
+          //trace("done");
+          return;
+        }
+      }
     }
+
+    function readI8() {
+      var val = 0;
+      val = bytesU8[pos] | 0;
+      pos = pos + 1 | 0;
+      return val | 0;
+    }
+
+    // Read an int16 value.
+    function readI16() {
+      var val = 0;
+      val = bytesU8[pos] << 8 | 0;
+      val = (val + (bytesU8[pos + 1 | 0] | 0)) | 0;
+      pos = pos + 2 | 0;
+      return val | 0;
+    }
+
+    // Write an int32 value.
+    function readI32() {
+      var val = 0;
+      val = bytesU8[pos] << 24;
+      val = (val + (bytesU8[pos + 1 | 0] << 16 | 0)) | 0;
+      val = (val + (bytesU8[pos + 2 | 0] << 8 | 0)) | 0;
+      val = (val + (bytesU8[pos + 3 | 0] | 0)) | 0;
+      pos = pos + 4 | 0;
+      return val | 0;
+    }
+
+    // WARNING writeD32() and writeD64() write bytes out with the reverse
+    // endian-ness of the host computer. The order is reversed because UBJSON
+    // demands big endian-ness and most computers use litte endian as their
+    // native encoding. Either way the dependency of this implementation on the
+    // native endian-ness of the host computer creates an incompatibility with
+    // the UBJSON spec. This bug will only manifest itself when reading and
+    // writing UBJSON values from a computer or UBJSON implementation with a
+    // different endian-ness. However, these are not use cases that are in scope
+    // for the current implementation.
+
+    // Read a float32 value.
+    function readD32() {
+      return +1.23;
+    }
+
+    // Read a float64 value.
+    function readD64() {
+      return +1.23;
+    }
+
+    // END Decoder
+    // END SNIP
 
     // Exports
     return {
@@ -327,7 +478,9 @@ var Builder = (function () {
       startString: startString,
       finishString: finishString,
       writeStringChar: writeStringChar,
-      position: position,
+      getPos: getPos,
+      setPos: setPos,
+      decode: decode,
     };
   }
 
@@ -335,35 +488,85 @@ var Builder = (function () {
 
   function test() {
     var buffer = new ArrayBuffer(4096);
+    var view = new Uint8Array(buffer);
+    var values = [];
     var imports = {
       trace: print,
+      pushNull: function () {
+        print("pushNull()");
+        values.push(null);
+      },
+      pushTrue: function () {
+        print("pushTrue()");
+        values.push(true);
+      },
+      pushFalse: function () {
+        print("pushFalse()");
+        values.push(false);
+      },
+      pushNumber: function (val) {
+        print("pushNumber() val=" + val);
+        values.push(val);
+      },
+      pushString: function (size) {
+        print("pushString() size=" + size);
+        var start = ubjson.getPos();
+        var stop = start + size;
+        var val = "";
+        for (var i = start; i < stop; i++) {
+          val += String.fromCharCode(view[i]);
+        }
+        values.push(val);
+        ubjson.setPos(stop);
+      },
+      newObject: function (count) {
+        print("newObject() count=" + count);
+        var val = {};
+        for (var i = count - 1; i >= 0; i--) {
+          var v = values.pop();
+          var n = values.pop();
+          val[n] = v;
+        }
+        values.push(val);
+      },
+      newArray: function (count) {
+        print("newArray() count=" + count);
+        var val = [];
+        for (var i = count - 1; i >= 0; i--) {
+          var v = values.pop();
+          val[i] = v;
+        }
+        values.push(val);
+      },
     }
-    var builder = Builder(global, imports, buffer);
+    var ubjson = UBJSON(global, imports, buffer);
     var view = new Uint8Array(buffer);
     var pos = [];
     var BIG = 0x01;
-    pos.push(builder.position());
-    builder.startObject();
-    builder.writeByte(10);
-    pos.push(builder.position());
-    builder.startString();
-    builder.writeStringChar("h".charCodeAt(0));
-    builder.writeStringChar("e".charCodeAt(0));
-    builder.writeStringChar("l".charCodeAt(0));
-    builder.writeStringChar("l".charCodeAt(0));
-    builder.writeStringChar("o".charCodeAt(0));
-    builder.finishString(pos.pop(), 5);
-    builder.finishObject(pos.pop(), 1);
-    pos.push(builder.position());
-    builder.startArray(BIG);
-    builder.writeI32(0xFFFF);
-    builder.writeByte(1);
-    builder.finishArray(pos.pop(), 2, BIG);
-    builder.writeD32(1.23);
-    builder.writeD64(1.23);
-    builder.writeD32(1.23);
+    pos.push(ubjson.getPos());
+    ubjson.startArray(BIG);
+    pos.push(ubjson.getPos());
+    ubjson.startObject();
+    ubjson.writeByte(10);
+    pos.push(ubjson.getPos());
+    ubjson.startString();
+    ubjson.writeStringChar("h".charCodeAt(0));
+    ubjson.writeStringChar("e".charCodeAt(0));
+    ubjson.writeStringChar("l".charCodeAt(0));
+    ubjson.writeStringChar("l".charCodeAt(0));
+    ubjson.writeStringChar("o".charCodeAt(0));
+    ubjson.finishString(pos.pop(), 5);
+    ubjson.finishObject(pos.pop(), 1);
+    ubjson.writeI32(0xFFFF);
+    ubjson.writeByte(1);
+    ubjson.writeD32(1.23);
+    ubjson.writeD64(1.23);
+    ubjson.writeD32(1.23);
+    ubjson.finishArray(pos.pop(), 7, BIG);
     dumpView();
-
+    ubjson.setPos(0);
+    ubjson.decode();
+    print(JSON.stringify(values.pop(), null, 2));
     function dumpView() {
       var i = 0;
       for ( ; i < 100 ; ) {
@@ -380,6 +583,6 @@ var Builder = (function () {
     test();
   }
 
-  return Builder;
+  return UBJSON;
 
 })();
